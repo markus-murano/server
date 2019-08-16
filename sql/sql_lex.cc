@@ -11175,12 +11175,34 @@ bool LEX::add_table_foreign_key(const LEX_CSTRING *name,
                                 Table_ident *ref_table_name,
                                 DDL_options ddl_options)
 {
+  if (ref_table_name->db.str == NULL)
+    ref_table_name->db= query_tables->db;
+
+  if (ref_table_name->db.str == NULL)
+    copy_db_to(&ref_table_name->db);
+  TABLE_LIST *ref_table= find_table_in_list(query_tables,
+                                            &TABLE_LIST::next_global,
+                                            &ref_table_name->db,
+                                            &ref_table_name->table);
+
+  if (!(thd->variables.option_bits & OPTION_NO_FOREIGN_KEY_CHECKS))
+  {
+    if (ref_table == NULL)
+      ref_table= first_select_lex()->add_table_to_list(thd, ref_table_name,
+                                                       NULL, 0,
+                                                       TL_READ,
+                                                       MDL_SHARED_READ);
+    if (unlikely(ref_table == NULL))
+      return 1;
+  }
+
   Key *key= new (thd->mem_root) Foreign_key(name,
                                             &last_key->columns,
                                             last_key->period,
                                             constraint_name,
                                             &ref_table_name->db,
                                             &ref_table_name->table,
+                                            ref_table,
                                             &ref_list,
                                             fk_ref_period,
                                             fk_delete_opt,
