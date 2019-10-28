@@ -1603,15 +1603,11 @@ struct dict_table_t {
 	/** Add the table definition to the data dictionary cache */
 	void add_to_cache();
 
-	/** Detects if the table is versioned.
+	/** @return whether the table is versioned.
 	It is assumed that both vers_start and vers_end set to 0
-	iff table is not versioned. In any other case this fields correspond to
-	actual column indexes.
-	 */
-	bool versioned() const
-	{
-		return vers_start || vers_end;
-	}
+	iff table is not versioned. In any other case these fields correspond to
+	actual positions in cols[]. */
+	bool versioned() const { return vers_start || vers_end; }
 	bool versioned_by_id() const
 	{
 		return versioned() && cols[vers_start].mtype == DATA_INT;
