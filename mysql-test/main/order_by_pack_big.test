@@ -1,0 +1,62 @@
+--source include/big_test.inc
+--source include/have_sequence.inc
+--source include/have_64bit.inc
+
+set @save_rand_seed1=  @@RAND_SEED1;
+set @save_rand_seed2=  @@RAND_SEED2;
+set @@RAND_SEED1=810763568, @@RAND_SEED2=600681772;
+
+create table t1(a int);
+insert into t1 select seq from seq_1_to_10000 order by rand();
+
+delimiter |;
+
+CREATE FUNCTION f1(median INT) RETURNS DOUBLE
+BEGIN
+  set @z = (rand() + rand() + rand() + rand() + rand() + rand())/6;
+  set @z = @z*median*2+1;
+  return round(@z);
+END|
+
+CREATE function f2(len INT) RETURNS varchar(256)
+BEGIN
+  DECLARE str VARCHAR(256) DEFAULT '';
+  DECLARE x INT DEFAULT 0;
+  WHILE (len > 0 AND len < 256) DO
+    SET x =round(rand()*25);
+    SET str= CONCAT(str, CHAR(65 + x));
+    SET len= len-1;
+  END WHILE;
+RETURN str;
+END|
+
+delimiter ;|
+
+create table t3 (id INT NOT NULL, a INT, b int);
+insert into t3  select a, f1(12), f1(32) from t1;
+
+CREATE TABLE t2(
+  id INT NOT NULL,
+  names VARCHAR(64),
+  address VARCHAR(132),
+  PRIMARY KEY (id)
+);
+
+insert into t2 select a, f2(f1(12)) , f2(f1(32)) from t1;
+
+set sort_buffer_size=262144*10;
+flush status;
+select id,
+       MD5(group_concat(substring(names,1,3), substring(address,1,3)))
+FROM t2
+GROUP BY id DIV 100
+ORDER BY id;
+show status like '%sort%';
+set sort_buffer_size=default;
+
+set @@RAND_SEED1= @save_rand_seed1;
+set @@RAND_SEED2= @save_rand_seed2;
+
+drop function f1;
+drop function f2;
+drop table t1,t2,t3;
