@@ -12454,8 +12454,7 @@ create_table_info_t::create_foreign_keys()
 		unsigned			  i = 0, j = 0;
 		while ((col = col_it++)) {
 			column_names[i] = mem_heap_strdupl(
-				foreign->heap, col->field_name.str,
-				col->field_name.length);
+				foreign->heap, col->str, col->length);
 			success = find_col(table, column_names + i);
 			if (!success) {
 				key_text k(fk);
@@ -15560,7 +15559,6 @@ get_foreign_key_info(
 	}
 
 	f_key_info.referenced_key_name = referenced_key_name;
-
 	return pf_key_info;
 }
 
