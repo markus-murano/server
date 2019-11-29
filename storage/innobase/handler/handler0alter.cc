@@ -534,6 +534,7 @@ inline bool dict_table_t::instant_column(const dict_table_t& table,
 			c.def_val = o->def_val;
 			DBUG_ASSERT(!((c.prtype ^ o->prtype)
 				      & ~(DATA_NOT_NULL | DATA_VERSIONED
+				          | DATA_PERIOD_START | DATA_PERIOD_END
 					  | CHAR_COLL_MASK << 16
 					  | DATA_LONG_TRUE_VARCHAR)));
 			DBUG_ASSERT(c.same_type(*o));
@@ -2754,7 +2755,7 @@ innobase_find_fk_index(
 	while (index != NULL) {
 		if (dict_foreign_qualify_index(table, col_names, columns,
 					       n_cols, index, NULL, true, 0,
-					       NULL, NULL, NULL)
+					       false, NULL, NULL, NULL)
 		    && std::find(drop_index.begin(), drop_index.end(), index)
 			   == drop_index.end()) {
 			return index;
@@ -2963,7 +2964,7 @@ innobase_get_foreign_key_info(
 						referenced_table, 0,
 						referenced_column_names,
 						i, index,
-						TRUE, FALSE,
+						TRUE, FALSE, false,
 						NULL, NULL, NULL);
 
 				DBUG_EXECUTE_IF(
@@ -7120,7 +7121,7 @@ innobase_check_foreign_key_index(
 			    foreign->n_fields, index,
 			    /*check_charsets=*/TRUE,
 			    /*check_null=*/FALSE,
-			    NULL, NULL, NULL)
+			    false, NULL, NULL, NULL)
 		    && NULL == innobase_find_equiv_index(
 			    foreign->referenced_col_names,
 			    foreign->n_fields,
@@ -7155,7 +7156,7 @@ innobase_check_foreign_key_index(
 			    foreign->n_fields, index,
 			    /*check_charsets=*/TRUE,
 			    /*check_null=*/FALSE,
-			    NULL, NULL, NULL)
+			    false, NULL, NULL, NULL)
 		    && NULL == innobase_find_equiv_index(
 			    foreign->foreign_col_names,
 			    foreign->n_fields,
@@ -9397,7 +9398,7 @@ innobase_update_foreign_try(
 				fk->type
 				& (DICT_FOREIGN_ON_DELETE_SET_NULL
 					| DICT_FOREIGN_ON_UPDATE_SET_NULL),
-				NULL, NULL, NULL);
+				false, NULL, NULL, NULL);
 			if (!fk->foreign_index) {
 				my_error(ER_FK_INCORRECT_OPTION,
 					 MYF(0), table_name, fk->id);
