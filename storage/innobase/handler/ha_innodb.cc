@@ -12425,7 +12425,7 @@ create_table_info_t::create_foreign_keys()
 				foreign->heap,
 				db_len + fk->foreign_id->length + 2));
 
-			ut_memcpy(foreign->id, table->name.m_name, db_len);
+			memcpy(foreign->id, table->name.m_name, db_len);
 			foreign->id[db_len] = '/';
 			strcpy(foreign->id + db_len + 1,
 			       fk->foreign_id->str);

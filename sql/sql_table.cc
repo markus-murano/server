@@ -10505,7 +10505,7 @@ end_inplace:
   {
     MDL_request_list::Iterator it(mdl_ref_tables);
     while (MDL_request *req= it++)
-      tdc_remove_table(thd, TDC_RT_REMOVE_ALL, req->key.db_name(), req->key.name(), FALSE);
+      tdc_remove_table(thd, TDC_RT_REMOVE_ALL, req->key.db_name(), req->key.name());
   }
   if (thd->locked_tables_list.reopen_tables(thd, false))
     goto err_with_mdl_after_alter;
