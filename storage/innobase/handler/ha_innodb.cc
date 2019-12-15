@@ -5844,19 +5844,15 @@ static FOREIGN_KEY_INFO*
 get_foreign_key_info(THD* thd, TABLE_SHARE* s, dict_foreign_t* foreign);
 
 /* TODO: Temporary until MDEV-21051 Store FK info in FRM files */
-FK_list*
-ha_innobase::build_foreign_list(THD* thd, dict_foreign_set& foreign_set,
+void
+ha_innobase::build_foreign_list(THD* thd, FK_list *result_list,
+				const dict_foreign_set& foreign_set,
 				bool& err) const
 {
-	FK_list* result_list
-		= (FK_list*)alloc_root(
-			&table->s->mem_root, sizeof(FK_list));
-	if (unlikely(!result_list)) {
-		err = true;
-		return NULL;
-	}
+	/* Unfortunately, RAII doesn't work for TABLE_SHARE now, so we need to
+	 * initialize it explicitly
+	 */
 	result_list->empty();
-
 	m_prebuilt->trx->op_info = "getting list of foreign keys";
 	mutex_enter(&dict_sys.mutex);
 
@@ -5878,8 +5874,6 @@ ha_innobase::build_foreign_list(THD* thd, dict_foreign_set& foreign_set,
 
 	mutex_exit(&dict_sys.mutex);
 	m_prebuilt->trx->op_info = "";
-
-	return result_list;
 }
 
 /** Open an InnoDB table
@@ -6159,32 +6153,27 @@ no_such_table:
 	info(HA_STATUS_NO_LOCK | HA_STATUS_VARIABLE | HA_STATUS_CONST | HA_STATUS_OPEN);
 
 	/* TODO: Temporary until MDEV-21051 Store FK info in FRM files */
-	/* Non-null s->referenced_keys now temporarily serves as indicator of
-	   initialized FK structures. This will change when FK info will be loaded from FRM */
-	if (!table->s->referenced_keys
-	    && table->s->tmp_table == NO_TMP_TABLE) {
+	bool is_initialized =
+		table->s->referenced_keys.elements
+		 == m_prebuilt->table->referenced_set.size()
+		&&
+		table->s->foreign_keys.elements
+		 == m_prebuilt->table->foreign_set.size();
+
+	if (is_initialized && table->s->tmp_table == NO_TMP_TABLE) {
 		bool err = false;
 		mysql_mutex_lock(&table->s->LOCK_share);
-		if (!table->s->referenced_keys) {
-			DBUG_ASSERT(!table->s->foreign_keys);
+		if (table->s->referenced_keys.is_empty()) {
 			if (!m_prebuilt->table->foreign_set.empty()) {
-				table->s->foreign_keys = build_foreign_list(
-					thd, m_prebuilt->table->foreign_set,
-					err);
+				build_foreign_list(thd,
+					&table->s->foreign_keys,
+					m_prebuilt->table->foreign_set, err);
 			}
 			if (!err
 			    && !m_prebuilt->table->referenced_set.empty()) {
-				table->s->referenced_keys = build_foreign_list(
-					thd, m_prebuilt->table->referenced_set,
-					err);
-			}
-			if (!table->s->referenced_keys) {
-				/* Assign some empty list to indicate that we
-				don't need to initialize this TABLE_SHARE
-				anymore. */
-				static FK_list empty_list;
-				DBUG_ASSERT(empty_list.is_empty());
-				table->s->referenced_keys = &empty_list;
+				build_foreign_list(thd,
+					&table->s->referenced_keys,
+					m_prebuilt->table->referenced_set, err);
 			}
 		}
 		mysql_mutex_unlock(&table->s->LOCK_share);
@@ -6192,7 +6181,6 @@ no_such_table:
 			set_my_errno(ENOMEM);
 			DBUG_RETURN(HA_ERR_OUT_OF_MEM);
 		}
-		DBUG_ASSERT(table->s->referenced_keys);
 	}
 
 	DBUG_RETURN(0);
@@ -12424,7 +12412,7 @@ create_table_info_t::create_foreign_keys()
 		create_name[bufend - create_name] = '\0';
 	}
 
-	List_iterator_fast<FOREIGN_KEY_INFO> key_it(*m_form->s->foreign_keys);
+	List_iterator_fast<FOREIGN_KEY_INFO> key_it(m_form->s->foreign_keys);
 
 	dict_table_t* table = dict_table_get_low(name);
 	if (!table) {
@@ -12905,8 +12893,7 @@ int create_table_info_t::create_table(bool create_fk)
 		dict_table_get_all_fts_indexes(m_table, fts->indexes);
 	}
 
-	dberr_t err = create_fk && m_form->s->foreign_keys
-		&& !m_form->s->foreign_keys->is_empty()
+	dberr_t err = create_fk && !m_form->s->foreign_keys.is_empty()
 		? create_foreign_keys() : DB_SUCCESS;
 
 	if (err == DB_SUCCESS) {

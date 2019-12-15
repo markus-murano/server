@@ -6284,10 +6284,10 @@ drop_create_field:
             }
           }
         }
-        else if (table->s->foreign_keys)
+        else
         {
           FOREIGN_KEY_INFO *f_key;
-          List_iterator<FOREIGN_KEY_INFO> fk_key_it(*table->s->foreign_keys);
+          List_iterator<FOREIGN_KEY_INFO> fk_key_it(table->s->foreign_keys);
           while ((f_key= fk_key_it++))
           {
             if (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
@@ -6385,10 +6385,10 @@ drop_create_field:
           }
         }
       }
-      else if (table->s->foreign_keys)
+      else
       {
         FOREIGN_KEY_INFO *f_key;
-        List_iterator<FOREIGN_KEY_INFO> fk_key_it(*table->s->foreign_keys);
+        List_iterator<FOREIGN_KEY_INFO> fk_key_it(table->s->foreign_keys);
         while ((f_key= fk_key_it++))
         {
           if (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
@@ -8190,14 +8190,12 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
           0 != my_strcasecmp(system_charset_info, def->change.str,
                              def->field_name.str))
       {
-        if (table->s->foreign_keys &&
-            table->s->foreign_keys->get(thd, refs_to_close, def->change, true))
+        if (table->s->foreign_keys.get(thd, refs_to_close, def->change, true))
         {
           my_error(ER_OUT_OF_RESOURCES, MYF(0));
           DBUG_RETURN(1);
         }
-        if (table->s->referenced_keys &&
-            table->s->referenced_keys->get(thd, refs_to_close, def->change, false))
+        if (table->s->referenced_keys.get(thd, refs_to_close, def->change, false))
         {
           my_error(ER_OUT_OF_RESOURCES, MYF(0));
           DBUG_RETURN(1);
@@ -8994,155 +8992,149 @@ static bool fk_prepare_copy_alter_table(THD *thd, TABLE *table,
 
   DBUG_ENTER("fk_prepare_copy_alter_table");
 
-  if (table->s->referenced_keys)
+  /*
+    Remove from the list all foreign keys in which table participates as
+    parent which are to be dropped by this ALTER TABLE. This is possible
+    when a foreign key has the same table as child and parent.
+  */
+  List_iterator<FOREIGN_KEY_INFO> fk_parent_key_it(table->s->referenced_keys);
+
+  while ((f_key= fk_parent_key_it++))
   {
-    /*
-      Remove from the list all foreign keys in which table participates as
-      parent which are to be dropped by this ALTER TABLE. This is possible
-      when a foreign key has the same table as child and parent.
-    */
-    List_iterator<FOREIGN_KEY_INFO> fk_parent_key_it(*table->s->referenced_keys);
+    Alter_drop *drop;
+    List_iterator_fast<Alter_drop> drop_it(alter_info->drop_list);
 
-    while ((f_key= fk_parent_key_it++))
+    while ((drop= drop_it++))
     {
-      Alter_drop *drop;
-      List_iterator_fast<Alter_drop> drop_it(alter_info->drop_list);
-
-      while ((drop= drop_it++))
-      {
-        /*
-          InnoDB treats foreign key names in case-insensitive fashion.
-          So we do it here too. For database and table name type of
-          comparison used depends on lower-case-table-names setting.
-          For l_c_t_n = 0 we use case-sensitive comparison, for
-          l_c_t_n > 0 modes case-insensitive comparison is used.
-        */
-        if ((drop->type == Alter_drop::FOREIGN_KEY) &&
-            (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
-                          drop->name) == 0) &&
-            (lex_string_cmp(table_alias_charset, f_key->foreign_db,
-                            &table->s->db) == 0) &&
-            (lex_string_cmp(table_alias_charset, f_key->foreign_table,
-                            &table->s->table_name) == 0))
-          fk_parent_key_it.remove();
-      }
-    }
-
-    /*
-      If there are FKs in which this table is parent which were not
-      dropped we need to prevent ALTER deleting rows from the table,
-      as it might break referential integrity. OTOH it is OK to do
-      so if foreign_key_checks are disabled.
-    */
-    if (!table->s->referenced_keys->is_empty() &&
-        !(thd->variables.option_bits & OPTION_NO_FOREIGN_KEY_CHECKS))
-      alter_ctx->set_fk_error_if_delete_row(table->s->referenced_keys->head());
-
-    fk_parent_key_it.rewind();
-    while ((f_key= fk_parent_key_it++))
-    {
-      enum fk_column_change_type changes;
-      const char *bad_column_name;
-
-      changes= fk_check_column_changes(thd, alter_info,
-                                      f_key->referenced_fields,
-                                      &bad_column_name);
-
-      switch(changes)
-      {
-      case FK_COLUMN_NO_CHANGE:
-        /* No significant changes. We can proceed with ALTER! */
-        break;
-      case FK_COLUMN_DATA_CHANGE:
-      {
-        char buff[NAME_LEN*2+2];
-        strxnmov(buff, sizeof(buff)-1, f_key->foreign_db->str, ".",
-                f_key->foreign_table->str, NullS);
-        my_error(ER_FK_COLUMN_CANNOT_CHANGE_CHILD, MYF(0), bad_column_name,
-                f_key->foreign_id->str, buff);
-        DBUG_RETURN(true);
-      }
-      case FK_COLUMN_RENAMED:
-        my_error(ER_ALTER_OPERATION_NOT_SUPPORTED_REASON, MYF(0),
-                "ALGORITHM=COPY",
-                ER_THD(thd, ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FK_RENAME),
-                "ALGORITHM=INPLACE");
-        DBUG_RETURN(true);
-      case FK_COLUMN_DROPPED:
-      {
-        StringBuffer<NAME_LEN*2+2> buff(system_charset_info);
-        LEX_CSTRING *db= f_key->foreign_db, *tbl= f_key->foreign_table;
-
-        append_identifier(thd, &buff, db);
-        buff.append('.');
-        append_identifier(thd, &buff, tbl);
-        my_error(ER_FK_COLUMN_CANNOT_DROP_CHILD, MYF(0), bad_column_name,
-                f_key->foreign_id->str, buff.c_ptr());
-        DBUG_RETURN(true);
-      }
-      default:
-        DBUG_ASSERT(0);
-      }
+      /*
+        InnoDB treats foreign key names in case-insensitive fashion.
+        So we do it here too. For database and table name type of
+        comparison used depends on lower-case-table-names setting.
+        For l_c_t_n = 0 we use case-sensitive comparison, for
+        l_c_t_n > 0 modes case-insensitive comparison is used.
+      */
+      if ((drop->type == Alter_drop::FOREIGN_KEY) &&
+          (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
+                        drop->name) == 0) &&
+          (lex_string_cmp(table_alias_charset, f_key->foreign_db,
+                          &table->s->db) == 0) &&
+          (lex_string_cmp(table_alias_charset, f_key->foreign_table,
+                          &table->s->table_name) == 0))
+        fk_parent_key_it.remove();
     }
   }
 
-  if (table->s->foreign_keys)
+  /*
+    If there are FKs in which this table is parent which were not
+    dropped we need to prevent ALTER deleting rows from the table,
+    as it might break referential integrity. OTOH it is OK to do
+    so if foreign_key_checks are disabled.
+  */
+  if (!table->s->referenced_keys.is_empty() &&
+      !(thd->variables.option_bits & OPTION_NO_FOREIGN_KEY_CHECKS))
+    alter_ctx->set_fk_error_if_delete_row(table->s->referenced_keys.head());
+
+  fk_parent_key_it.rewind();
+  while ((f_key= fk_parent_key_it++))
   {
-    /*
-      Remove from the list all foreign keys which are to be dropped
-      by this ALTER TABLE.
-    */
-    List_iterator<FOREIGN_KEY_INFO> fk_key_it(*table->s->foreign_keys);
+    enum fk_column_change_type changes;
+    const char *bad_column_name;
 
-    while ((f_key= fk_key_it++))
+    changes= fk_check_column_changes(thd, alter_info,
+                                    f_key->referenced_fields,
+                                    &bad_column_name);
+
+    switch(changes)
     {
-      Alter_drop *drop;
-      List_iterator_fast<Alter_drop> drop_it(alter_info->drop_list);
-
-      while ((drop= drop_it++))
-      {
-        /* Names of foreign keys in InnoDB are case-insensitive. */
-        if ((drop->type == Alter_drop::FOREIGN_KEY) &&
-            (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
-                          drop->name) == 0))
-          fk_key_it.remove();
-      }
-    }
-
-    fk_key_it.rewind();
-    while ((f_key= fk_key_it++))
+    case FK_COLUMN_NO_CHANGE:
+      /* No significant changes. We can proceed with ALTER! */
+      break;
+    case FK_COLUMN_DATA_CHANGE:
     {
-      enum fk_column_change_type changes;
-      const char *bad_column_name;
-
-      changes= fk_check_column_changes(thd, alter_info,
-                                      f_key->foreign_fields,
-                                      &bad_column_name);
-
-      switch(changes)
-      {
-      case FK_COLUMN_NO_CHANGE:
-        /* No significant changes. We can proceed with ALTER! */
-        break;
-      case FK_COLUMN_DATA_CHANGE:
-        my_error(ER_FK_COLUMN_CANNOT_CHANGE, MYF(0), bad_column_name,
-                f_key->foreign_id->str);
-        DBUG_RETURN(true);
-      case FK_COLUMN_RENAMED:
-        my_error(ER_ALTER_OPERATION_NOT_SUPPORTED_REASON, MYF(0),
-                "ALGORITHM=COPY",
-                ER_THD(thd, ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FK_RENAME),
-                "ALGORITHM=INPLACE");
-        DBUG_RETURN(true);
-      case FK_COLUMN_DROPPED:
-        my_error(ER_FK_COLUMN_CANNOT_DROP, MYF(0), bad_column_name,
-                f_key->foreign_id->str);
-        DBUG_RETURN(true);
-      default:
-        DBUG_ASSERT(0);
-      }
+      char buff[NAME_LEN*2+2];
+      strxnmov(buff, sizeof(buff)-1, f_key->foreign_db->str, ".",
+              f_key->foreign_table->str, NullS);
+      my_error(ER_FK_COLUMN_CANNOT_CHANGE_CHILD, MYF(0), bad_column_name,
+              f_key->foreign_id->str, buff);
+      DBUG_RETURN(true);
     }
-  } // if (table->s->foreign_keys)
+    case FK_COLUMN_RENAMED:
+      my_error(ER_ALTER_OPERATION_NOT_SUPPORTED_REASON, MYF(0),
+              "ALGORITHM=COPY",
+              ER_THD(thd, ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FK_RENAME),
+              "ALGORITHM=INPLACE");
+      DBUG_RETURN(true);
+    case FK_COLUMN_DROPPED:
+    {
+      StringBuffer<NAME_LEN*2+2> buff(system_charset_info);
+      LEX_CSTRING *db= f_key->foreign_db, *tbl= f_key->foreign_table;
+
+      append_identifier(thd, &buff, db);
+      buff.append('.');
+      append_identifier(thd, &buff, tbl);
+      my_error(ER_FK_COLUMN_CANNOT_DROP_CHILD, MYF(0), bad_column_name,
+              f_key->foreign_id->str, buff.c_ptr());
+      DBUG_RETURN(true);
+    }
+    default:
+      DBUG_ASSERT(0);
+    }
+  }
+
+  /*
+    Remove from the list all foreign keys which are to be dropped
+    by this ALTER TABLE.
+  */
+  List_iterator<FOREIGN_KEY_INFO> fk_key_it(table->s->foreign_keys);
+
+  while ((f_key= fk_key_it++))
+  {
+    Alter_drop *drop;
+    List_iterator_fast<Alter_drop> drop_it(alter_info->drop_list);
+
+    while ((drop= drop_it++))
+    {
+      /* Names of foreign keys in InnoDB are case-insensitive. */
+      if ((drop->type == Alter_drop::FOREIGN_KEY) &&
+          (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
+                        drop->name) == 0))
+        fk_key_it.remove();
+    }
+  }
+
+  fk_key_it.rewind();
+  while ((f_key= fk_key_it++))
+  {
+    enum fk_column_change_type changes;
+    const char *bad_column_name;
+
+    changes= fk_check_column_changes(thd, alter_info,
+                                    f_key->foreign_fields,
+                                    &bad_column_name);
+
+    switch(changes)
+    {
+    case FK_COLUMN_NO_CHANGE:
+      /* No significant changes. We can proceed with ALTER! */
+      break;
+    case FK_COLUMN_DATA_CHANGE:
+      my_error(ER_FK_COLUMN_CANNOT_CHANGE, MYF(0), bad_column_name,
+              f_key->foreign_id->str);
+      DBUG_RETURN(true);
+    case FK_COLUMN_RENAMED:
+      my_error(ER_ALTER_OPERATION_NOT_SUPPORTED_REASON, MYF(0),
+              "ALGORITHM=COPY",
+              ER_THD(thd, ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FK_RENAME),
+              "ALGORITHM=INPLACE");
+      DBUG_RETURN(true);
+    case FK_COLUMN_DROPPED:
+      my_error(ER_FK_COLUMN_CANNOT_DROP, MYF(0), bad_column_name,
+              f_key->foreign_id->str);
+      DBUG_RETURN(true);
+    default:
+      DBUG_ASSERT(0);
+    }
+  }
 
   /*
     Normally, an attempt to modify an FK parent table will cause
@@ -9747,21 +9739,18 @@ bool mysql_alter_table(THD *thd, const LEX_CSTRING *new_db,
     {
       if (drop->type == Alter_drop::CHECK_CONSTRAINT)
       {
-        if (table->s->foreign_keys)
-        {
-          /* Test if there is a FOREIGN KEY with this name. */
-          FOREIGN_KEY_INFO *f_key;
-          List_iterator<FOREIGN_KEY_INFO> fk_key_it(*table->s->foreign_keys);
+        /* Test if there is a FOREIGN KEY with this name. */
+        FOREIGN_KEY_INFO *f_key;
+        List_iterator<FOREIGN_KEY_INFO> fk_key_it(table->s->foreign_keys);
 
-          while ((f_key= fk_key_it++))
+        while ((f_key= fk_key_it++))
+        {
+          if (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
+                drop->name) == 0)
           {
-            if (my_strcasecmp(system_charset_info, f_key->foreign_id->str,
-                  drop->name) == 0)
-            {
-              drop->type= Alter_drop::FOREIGN_KEY;
-              alter_info->flags|= ALTER_DROP_FOREIGN_KEY;
-              goto do_continue;
-            }
+            drop->type= Alter_drop::FOREIGN_KEY;
+            alter_info->flags|= ALTER_DROP_FOREIGN_KEY;
+            goto do_continue;
           }
         }
 

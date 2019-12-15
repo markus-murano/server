@@ -4710,9 +4710,9 @@ handle_table(THD *thd, Query_tables_list *prelocking_ctx,
       *need_prelocking= TRUE;
       Query_arena_stmt stmt(thd);
       prelock_fk_tables(thd, table_list, prelocking_ctx,
-                        *table->s->foreign_keys, true);
+                        table->s->foreign_keys, true);
       prelock_fk_tables(thd, table_list, prelocking_ctx,
-                        *table->s->referenced_keys, false);
+                        table->s->referenced_keys, false);
     }
   }
 

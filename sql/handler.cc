@@ -21,21 +21,17 @@
 */
 
 #include "mariadb.h"
-#include <inttypes.h>
 #include "sql_priv.h"
 #include "unireg.h"
-#include "rpl_rli.h"
 #include "sql_cache.h"                   // query_cache, query_cache_*
 #include "sql_connect.h"                 // global_table_stats
 #include "key.h"     // key_copy, key_unpack, key_cmp_if_same, key_cmp
 #include "sql_table.h"                   // build_table_filename
-#include "sql_parse.h"                          // check_stack_overrun
 #include "sql_acl.h"            // SUPER_ACL
 #include "sql_base.h"           // TDC_element
 #include "discover.h"           // extension_based_table_discovery, etc
 #include "log_event.h"          // *_rows_log_event
 #include "create_options.h"
-#include <myisampack.h>
 #include "transaction.h"
 #include "myisam.h"
 #include "probes_mysql.h"
