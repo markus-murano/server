@@ -1134,6 +1134,7 @@ struct st_cond_statistic;
 class SplM_opt_info;
 
 struct vers_select_conds_t;
+struct FOREIGN_KEY;
 
 struct TABLE
 {
@@ -1198,6 +1199,11 @@ public:
   Field *next_number_field;		/* Set if next_number is activated */
   Field *found_next_number_field;	/* Set on open */
   Virtual_column_info **check_constraints;
+
+  uint foreign_keys;
+  uint referenced_keys;
+  FOREIGN_KEY *foreign;
+  FOREIGN_KEY *referenced;
 
   /* Table's triggers, 0 if there are no of them */
   Table_triggers_list *triggers;

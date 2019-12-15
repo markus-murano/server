@@ -12316,7 +12316,7 @@ public:
 static const unsigned MAX_COLS_PER_FK = 500;
 
 static const char *get_fk_column(dict_table_t *table, trx_t *trx,
-				 dict_foreign_t *foreign, Foreign_key *fk,
+				 dict_foreign_t *foreign, FOREIGN_KEY_INFO *fk,
 				 const LEX_CSTRING &field_name,
 				 char *create_name,
 				 const char *operation,
@@ -12489,16 +12489,14 @@ create_table_info_t::create_foreign_keys()
 		unsigned			  i = 0, j = 0;
 		while ((col = col_it++)) {
 			column_names[i] = get_fk_column(table, m_trx, foreign,
-							fk, col->field_name,
-							create_name,
+							fk, *col, create_name,
 							operation, i);
 			if (column_names[i] == nullptr)
 				return DB_CANNOT_ADD_CONSTRAINT;
 			i++;
 		}
-		if (fk->period)
+		if (fk->has_period)
 		{
-			ut_ad(fk->period.streq(m_create_info->period_info.name));
 			const auto &period= m_create_info->period_info.period;
 			for (auto field_name: {period.start, period.end})
 			{
@@ -12537,7 +12535,7 @@ create_table_info_t::create_foreign_keys()
 
 		foreign->foreign_index = index;
 		foreign->n_fields      = (unsigned int)i;
-		foreign->has_period    = bool(fk->period);
+		foreign->has_period    = fk->has_period;
 
 		foreign->foreign_col_names = static_cast<const char**>(
 			mem_heap_alloc(foreign->heap, i * sizeof(void*)));
@@ -12598,7 +12596,7 @@ create_table_info_t::create_foreign_keys()
 			}
 			++j;
 		}
-		if (success && fk->ref_period)
+		if (success && fk->has_period)
 		{
 			dict_table_t *ref_table = foreign->referenced_table;
 			for (auto pcol: {uint(ref_table->period_start),
@@ -12634,7 +12632,7 @@ create_table_info_t::create_foreign_keys()
 			index = dict_foreign_find_index(
 				foreign->referenced_table, NULL,
 				ref_column_names, i, foreign->foreign_index,
-				TRUE, FALSE, bool(fk->period),
+				TRUE, FALSE, fk->has_period,
 				&index_error, &err_col, &err_index);
 
 			if (!index) {
