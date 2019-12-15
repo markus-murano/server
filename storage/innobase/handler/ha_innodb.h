@@ -500,9 +500,8 @@ protected:
         bool                    m_mysql_has_locked;
 
 private:
-	void
-	build_foreign_list(THD* thd, FK_list *result_list,
-			   const dict_foreign_set& foreign_set,
+	FK_list*
+	build_foreign_list(THD* thd, dict_foreign_set& foreign_set,
 			   bool& err) const;
 };
 
