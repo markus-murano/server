@@ -17,6 +17,10 @@ s	CREATE TABLE `s` (
   CONSTRAINT `s_ibfk_1` FOREIGN KEY (`id`, `x`, `s`, `e`) REFERENCES `t` (`id`, `x`, `s`, `e`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 flush tables;
+Warnings:
+Note	1105	Referenced table test.t is not opened
+insert into s values(1, 1, '2017-01-03', '2017-01-20');
+ERROR 23000: Cannot add or update a child row: a foreign key constraint fails
 insert into t values(1, 1, '2017-01-03', '2017-01-20');
 insert into t values(1, 1, '2017-01-20', '2017-01-25');
 insert into t values(1, 1, '2017-01-25', '2017-01-26');
@@ -120,35 +124,61 @@ id	x	s	e
 1	2	2017-01-28	2017-01-29
 update t set x= 2 where s='2017-01-03' and e='2017-01-20';
 ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
+#
+# False-positives
+#
 # Expand left
 update t set s= '2017-01-01' where s = '2017-01-03' and e = '2017-01-20';
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 # Shrink left
 update t set s= '2017-01-05' where e = '2017-01-20';
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 # Expand right
 update t set e= '2017-02-10' where s = '2017-01-26' and e = '2017-01-30';
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 # Shrink right
 update t set e= '2017-01-29' where s = '2017-01-26';
 ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 delete from s where s = '2017-01-27' and e = '2017-01-30';
-update t set e= '2017-01-29' where s = '2017-01-26';
+update t set e= '2017-01-29' where s = '2017-01-26' and x = 1;
 # Shrink both
+# Not a false-positive
 update t set s= '2017-01-27', e= '2017-01-28' where x = 2;
 ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
+# False-positive
 update t set s= '2017-01-28', e= '2017-01-29' where x = 2;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 # Expand both
 update t set s= '2017-01-20', e= '2017-02-05' where x = 2;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 # Move right
+# Not a false-positive
 update t set s= '2017-02-02', e= '2017-02-25' where x = 2;
 ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
+# False-positive
 update t set s= '2017-01-28', e= '2017-02-25' where x = 2;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 # Move left
+# Not a false-positive
 update t set s= '2017-01-20', e= '2017-01-27' where x = 2;
 ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
+# False-positive
 update t set s= '2017-01-20', e= '2017-01-29' where x = 2;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 create or replace table s (id int, x int, s date, e date, period for fp(s,e),
 foreign key(id, x, period no_such_p)
 references t(id, x, period p)
 on delete restrict);
 ERROR HY000: Period `no_such_p` is not found in table
+create or replace table s (id int, x int, s date, e date, period for fp(s,e),
+foreign key(id, x, s, e)
+references t(id, x, period p)
+on delete restrict);
+ERROR 42000: Incorrect foreign key definition for 'foreign key without name': Key reference and table reference don't match
+create or replace table s (id int, x int, s date, e date, period for fp(s,e),
+foreign key(id, x, period fp)
+references t(id, x, s, e)
+on delete restrict);
+ERROR 42000: Incorrect foreign key definition for 'foreign key without name': Key reference and table reference don't match
 drop database test;
 create database test;

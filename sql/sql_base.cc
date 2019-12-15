@@ -3541,6 +3541,12 @@ open_and_process_routine(THD *thd, Query_tables_list *prelocking_ctx,
   DBUG_RETURN(FALSE);
 }
 
+static bool table_can_need_prelocking(THD *thd, TABLE_LIST *table)
+{
+  return (table->updating && table->lock_type >= TL_WRITE_ALLOW_WRITE)
+         || thd->lex->default_used;
+}
+
 /*
   If we are not already in prelocked mode and extended table list is not
   yet built we might have to build the prelocking set for this statement.
@@ -3555,12 +3561,9 @@ bool extend_table_list(THD *thd, TABLE_LIST *tables,
 {
   bool error= false;
   LEX *lex= thd->lex;
-  bool maybe_need_prelocking=
-    (tables->updating && tables->lock_type >= TL_WRITE_ALLOW_WRITE)
-    || thd->lex->default_used;
 
   if (thd->locked_tables_mode <= LTM_LOCK_TABLES &&
-      ! has_prelocking_list && maybe_need_prelocking)
+      ! has_prelocking_list && table_can_need_prelocking(thd, tables))
   {
     bool need_prelocking= FALSE;
     TABLE_LIST **save_query_tables_last= lex->query_tables_last;
@@ -4199,29 +4202,29 @@ TABLE *find_fk_open_table(THD *thd, const char *db, size_t db_len,
 
 static
 FOREIGN_KEY *convert_foreign_key_list(THD *thd,
-                                      TABLE *referenced_table_init,
                                       TABLE *foreign_table_init,
+                                      TABLE *referenced_table_init,
                                       const List<FOREIGN_KEY_INFO> &fk_list,
                                       MEM_ROOT *table_root)
 {
   auto *fk_buf= (FOREIGN_KEY*)
                 alloc_root(table_root, fk_list.elements * sizeof(FOREIGN_KEY));
+  auto * const fk_buf_result= fk_buf;
+
   for(const auto &fk: fk_list)
   {
-    if (!fk.has_period)
-      continue;
-    TABLE *referenced_table = referenced_table_init
-                              ? referenced_table_init
-                              : find_fk_open_table(thd, fk.referenced_db->str,
-                                                   fk.referenced_db->length,
-                                                   fk.referenced_table->str,
-                                                   fk.referenced_table->length);
     TABLE *foreign_table = foreign_table_init
                            ? foreign_table_init
                            : find_fk_open_table(thd, fk.foreign_db->str,
                                                 fk.foreign_db->length,
                                                 fk.foreign_table->str,
                                                 fk.foreign_table->length);
+    TABLE *referenced_table = referenced_table_init
+                              ? referenced_table_init
+                              : find_fk_open_table(thd, fk.referenced_db->str,
+                                                   fk.referenced_db->length,
+                                                   fk.referenced_table->str,
+                                                   fk.referenced_table->length);
     DBUG_ASSERT(referenced_table != NULL && foreign_table != NULL);
 
     int fk_no= find_index_by_fields(foreign_table, fk.foreign_fields);
@@ -4239,7 +4242,7 @@ FOREIGN_KEY *convert_foreign_key_list(THD *thd,
                              fk.update_method};
     fk_buf++;
   }
-  return fk_buf;
+  return fk_buf_result;
 }
 
 /**
@@ -4558,17 +4561,37 @@ restart:
       continue;
 
     auto *table= tables->table;
+    bool fks_prelocked= thd->locked_tables_mode <= LTM_LOCK_TABLES &&
+                        !has_prelocking_list &&
+                        table_can_need_prelocking(thd, tables);
+    /* Some tables will miss FK data in cases, like:
+     * Temporary tables
+     * Views
+     * Tables opened for read (SHOW CREATE will use TABLE_SHARE text data)
+     * Prelocking mode */
     if (!table)
       continue;
+    table->foreign_keys= 0;
+    table->foreign= NULL;
+    table->referenced_keys= 0;
+    table->referenced= NULL;
+    if (!fks_prelocked)
+      continue;
 
-    table->foreign_keys= table->s->foreign_keys.elements;
-    table->foreign= convert_foreign_key_list(thd, table, NULL,
-                                             table->s->foreign_keys,
-                                             &table->mem_root);
-    table->referenced_keys= table->s->referenced_keys.elements;
-    table->referenced= convert_foreign_key_list(thd, table, NULL,
-                                                table->s->foreign_keys,
-                                                &table->mem_root);
+    if (table->s->foreign_keys)
+    {
+      table->foreign_keys= table->s->foreign_keys->elements;
+      table->foreign= convert_foreign_key_list(thd, table, NULL,
+                                               *table->s->foreign_keys,
+                                               &table->mem_root);
+    }
+    if (table->s->referenced_keys)
+    {
+      table->referenced_keys= table->s->referenced_keys->elements;
+      table->referenced= convert_foreign_key_list(thd, NULL, table,
+                                                  *table->s->referenced_keys,
+                                                  &table->mem_root);
+    }
   }
 
 #ifdef WITH_WSREP
@@ -4734,7 +4757,7 @@ static
 void prelock_fk_tables(THD *thd, TABLE_LIST *table_list,
                        Query_tables_list *prelocking_ctx,
                        List<FOREIGN_KEY_INFO> &fk_list,
-                       bool is_referential)
+                       bool is_foreign)
 {
   for (auto fk: fk_list)
   {
@@ -4743,13 +4766,13 @@ void prelock_fk_tables(THD *thd, TABLE_LIST *table_list,
     bool upd_modifiels_child= fk_modifies_child(fk.update_method);
 
     thr_lock_type lock_type= TL_READ;
-    if (is_referential
+    if (!is_foreign
         && ((op & (1u << TRG_EVENT_DELETE) && del_modifies_child)
             || (op & (1u << TRG_EVENT_UPDATE) && upd_modifiels_child)))
       lock_type= TL_WRITE_ALLOW_WRITE;
 
-    auto *db= is_referential ? fk.foreign_db : fk.referenced_db;
-    auto *table_name= is_referential ? fk.foreign_table : fk.referenced_table;
+    auto *db= is_foreign ? fk.referenced_db : fk.foreign_db;
+    auto *table_name= is_foreign ? fk.referenced_table : fk.foreign_table;
 
     if (table_already_fk_prelocked(prelocking_ctx->query_tables,
                                    db, table_name, lock_type))
@@ -4814,10 +4837,12 @@ handle_table(THD *thd, Query_tables_list *prelocking_ctx,
     {
       *need_prelocking= TRUE;
       Query_arena_stmt stmt(thd);
-      prelock_fk_tables(thd, table_list, prelocking_ctx,
-                        *table->s->foreign_keys, true);
-      prelock_fk_tables(thd, table_list, prelocking_ctx,
-                        *table->s->referenced_keys, false);
+      if (table->s->foreign_keys)
+        prelock_fk_tables(thd, table_list, prelocking_ctx,
+                          *table->s->foreign_keys, true);
+      if (table->s->referenced_keys)
+        prelock_fk_tables(thd, table_list, prelocking_ctx,
+                          *table->s->referenced_keys, false);
     }
   }
 

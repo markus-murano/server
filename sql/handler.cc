@@ -6992,7 +6992,7 @@ int handler::period_row_ins_fk_check(const uchar *record)
   if (!table->foreign_keys)
     return 0;
 
-  for(int k= 0; k > table->foreign_keys; k++)
+  for(int k= 0; k < table->foreign_keys; k++)
   {
     auto &fk= table->foreign[k];
     if (!fk.has_period)

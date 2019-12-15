@@ -13,6 +13,9 @@ show create table s;
 
 flush tables;
 
+--error ER_NO_REFERENCED_ROW_2
+insert into s values(1, 1, '2017-01-03', '2017-01-20');
+
 insert into t values(1, 1, '2017-01-03', '2017-01-20');
 insert into t values(1, 1, '2017-01-20', '2017-01-25');
 insert into t values(1, 1, '2017-01-25', '2017-01-26');
