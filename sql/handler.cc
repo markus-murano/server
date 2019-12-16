@@ -6836,43 +6836,67 @@ void set_bits_with_key(MY_BITMAP *map, const KEY *key, uint key_parts)
     bitmap_set_bit(map, key->key_part[i].fieldnr - 1);
 }
 
-static int period_row_check_delete_for_key(const uchar *record, FOREIGN_KEY *fk)
+static int period_row_check_delete_for_key(const uchar *record,
+                                           const FOREIGN_KEY &fk)
 {
-
-  handler *foreign_handler= fk->foreign_key->table->file;
+  handler *foreign_handler= fk.foreign_key->table->file;
 
   /* We shouldn't save iterator here, since this handler is never used.
      The foreign table is only opened for FK matches. */
-  int error= foreign_handler->ha_index_init(fk->foreign_key_nr, false);
+  int error= foreign_handler->ha_index_init(fk.foreign_key_nr, false);
   if(error)
     return error;
 
 
-  set_bits_with_key(fk->foreign_key->table->read_set,
-                    fk->foreign_key, fk->fields_num);
+  set_bits_with_key(fk.foreign_key->table->read_set,
+                    fk.foreign_key, fk.fields_num);
   auto *record_buffer= foreign_handler->get_table()->record[0];
   auto *key_buffer= foreign_handler->get_table()->record[1];
 
-  key_copy(key_buffer, record, fk->referenced_key, 0);
+  key_copy(key_buffer, record, fk.referenced_key, 0);
   error= period_find_overlapping_record(foreign_handler,
                                         key_buffer,
                                         record,
                                         record_buffer,
-                                        *fk->referenced_key,
-                                        *fk->foreign_key);
+                                        *fk.referenced_key,
+                                        *fk.foreign_key);
 
   int end_error= foreign_handler->ha_index_end();
 
-    if (error == HA_ERR_KEY_NOT_FOUND) // no key matched
-      return 0;
-    else if (error)
-      return error;
-    else if (end_error)
-      return end_error;
-    else if (key_period_compare_periods(*fk->referenced_key,
-                                        *fk->foreign_key,
-                                        record, record_buffer) == 0)
-      return HA_ERR_ROW_IS_REFERENCED; // == 0 means records overlap
+  if (error == HA_ERR_KEY_NOT_FOUND) // no key matched
+    error= 0;
+
+  if (error || end_error)
+    return error ? error : end_error;
+
+  // if records overlap, then we can't delete a record
+  if (key_period_compare_periods(*fk.referenced_key, *fk.foreign_key,
+                                 record, record_buffer) == 0)
+    error= HA_ERR_ROW_IS_REFERENCED;
+
+  return error;
+}
+
+/**
+@param record                      record to update from, or a deleted record */
+int handler::period_row_del_fk_check(const uchar *record)
+{
+  if (!table->referenced_keys)
+    return 0;
+
+  for(int k= 0; k < table->referenced_keys; k++)
+  {
+    const auto &fk= table->referenced[k];
+
+    if (!fk.has_period)
+      continue;
+
+    DBUG_ASSERT(fk.fields_num == fk.foreign_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.referenced_key->user_defined_key_parts);
+
+    int res= period_row_check_delete_for_key(record, fk);
+    if(res)
+      return res;
   }
   return 0;
 }
@@ -6973,25 +6997,26 @@ static int period_check_row_references(handler *ref_handler,
   return 0;
 }
 
-static int period_row_check_insert_for_key(const uchar *record, FOREIGN_KEY *fk)
+static int period_row_check_insert_for_key(const uchar *record,
+                                           const FOREIGN_KEY &fk)
 {
-  handler *ref_handler= fk->referenced_key->table->file;
+  handler *ref_handler= fk.referenced_key->table->file;
 
-  int error= ref_handler->ha_index_init(fk->foreign_key_nr, false);
+  int error= ref_handler->ha_index_init(fk.foreign_key_nr, false);
   if(error)
     return error;
 
-  set_bits_with_key(fk->referenced_key->table->read_set,
-                    fk->referenced_key, fk->fields_num);
+  set_bits_with_key(fk.referenced_key->table->read_set,
+                    fk.referenced_key, fk.fields_num);
 
   auto *ref_record= ref_handler->get_table()->record[0];
   auto *key_buffer= ref_handler->get_table()->record[1];
 
-  key_copy(key_buffer, record, fk->foreign_key, 0);
+  key_copy(key_buffer, record, fk.foreign_key, 0);
   bool row_references;
   error= period_check_row_references(ref_handler, key_buffer,
                                      record, ref_record,
-                                     *fk->foreign_key, *fk->referenced_key);
+                                     *fk.foreign_key, *fk.referenced_key);
   if (error == HA_ERR_KEY_NOT_FOUND)
     error= HA_ERR_NO_REFERENCED_ROW;
 
@@ -7002,18 +7027,17 @@ static int period_row_check_insert_for_key(const uchar *record, FOREIGN_KEY *fk)
 
 int handler::period_row_ins_fk_check(const uchar *record)
 {
-  if (!has_foreign_keys())
+  if (!table->foreign_keys)
     return 0;
 
-  List <FOREIGN_KEY> fk_list= get_child_foreign_keys(table);
-  List_iterator<FOREIGN_KEY> fk_list_it(fk_list);
-  while(auto fk= fk_list_it++)
+  for(int k= 0; k < table->foreign_keys; k++)
   {
-    if (!fk->has_period)
+    const auto &fk= table->foreign[k];
+    if (!fk.has_period)
       continue;
 
-    DBUG_ASSERT(fk->fields_num == fk->foreign_key->user_defined_key_parts);
-    DBUG_ASSERT(fk->fields_num == fk->referenced_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.foreign_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.referenced_key->user_defined_key_parts);
 
     int res= period_row_check_insert_for_key(record, fk);
     if (res)
@@ -7064,17 +7088,18 @@ int handler::period_row_upd_fk_check(const uchar *old_data, const uchar *new_dat
   // we will use record_dup instead of old_data to modify period values
   memcpy(record_dup, old_data, table->s->reclength);
 
-  List <FOREIGN_KEY> fk_list= get_parent_foreign_keys(table);
-  List_iterator<FOREIGN_KEY> fk_list_it(fk_list);
-  while(auto fk= fk_list_it++)
+  for(int k= 0; k < table->referenced_keys; k++)
   {
-    if (!fk->has_period)
+    const auto &fk= table->referenced[k];
+    if (!fk.has_period)
       continue;
 
-    DBUG_ASSERT(fk->fields_num == fk->foreign_key->user_defined_key_parts);
-    DBUG_ASSERT(fk->fields_num == fk->referenced_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.foreign_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.referenced_key->user_defined_key_parts);
 
-    const auto &key= *fk->referenced_key;
+    const auto &key= *fk.referenced_key;
+    DBUG_ASSERT(key.table->alias.eq(&table->alias, table->alias.charset()));
+
     int error= 0;
     if (TABLE::check_period_overlaps(key, key, old_data, new_data) != 0)
     {
@@ -7105,17 +7130,19 @@ int handler::period_row_upd_fk_check(const uchar *old_data, const uchar *new_dat
 
   memcpy(record_dup, new_data, table->s->reclength);
 
-  List <FOREIGN_KEY> child_fk_list= get_child_foreign_keys(table);
-  List_iterator<FOREIGN_KEY> child_fk_list_it(child_fk_list);
-  while(auto fk= child_fk_list_it++)
+
+  for(int k= 0; k < table->foreign_keys; k++)
   {
-    if (!fk->has_period)
+    const auto &fk= table->foreign[k];
+    if (!fk.has_period)
       continue;
 
-    DBUG_ASSERT(fk->fields_num == fk->foreign_key->user_defined_key_parts);
-    DBUG_ASSERT(fk->fields_num == fk->referenced_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.foreign_key->user_defined_key_parts);
+    DBUG_ASSERT(fk.fields_num == fk.referenced_key->user_defined_key_parts);
 
-    const auto &key= *fk->foreign_key;
+    const auto &key= *fk.foreign_key;
+    DBUG_ASSERT(key.table->alias.eq(&table->alias, table->alias.charset()));
+
     int error= 0;
     if (TABLE::check_period_overlaps(key, key, old_data, new_data) != 0)
     {
