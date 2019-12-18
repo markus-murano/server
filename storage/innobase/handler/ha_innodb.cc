@@ -11039,7 +11039,8 @@ err_col:
 		j++;
 	}
 
-	ut_ad(have_vers_start == have_vers_end && table->versioned() == have_vers_start);
+	ut_ad(have_vers_start == have_vers_end);
+	ut_ad(table->versioned() == have_vers_start);
 	ut_ad(!table->versioned() || table->vers_start != table->vers_end);
 
 	if (num_v) {
