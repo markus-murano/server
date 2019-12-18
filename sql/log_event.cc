@@ -1040,9 +1040,14 @@ row_log_event_uncompress(const Format_description_log_event *description_event,
 
 uint32 binlog_get_uncompress_len(const char *buf)
 {
-  DBUG_ASSERT((buf[0] & 0xe0) == 0x80);
-  uint32 lenlen = buf[0] & 0x07;
   uint32 len = 0;
+  uint32 lenlen = 0;
+
+  if ((buf == NULL) || ((buf[0] & 0xe0) != 0x80))
+    return len;
+
+  lenlen = buf[0] & 0x07;
+
   switch(lenlen)
   {
   case 1:
