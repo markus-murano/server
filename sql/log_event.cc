@@ -4265,7 +4265,6 @@ code_name(int code)
 #define CHECK_SPACE(PTR,END,CNT)                      \
   do {                                                \
     DBUG_PRINT("info", ("Read %s", code_name(pos[-1]))); \
-    DBUG_ASSERT((PTR) + (CNT) <= (END));              \
     if ((PTR) + (CNT) > (END)) {                      \
       DBUG_PRINT("info", ("query= 0"));               \
       query= 0;                                       \
