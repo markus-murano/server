@@ -15614,6 +15614,7 @@ get_foreign_key_info(
 
 	f_key_info.referenced_key_name = referenced_key_name;
 	f_key_info.has_period = foreign->has_period;
+	bool has_period = f_key_info.has_period;
 
 	return pf_key_info;
 }

@@ -4800,10 +4800,12 @@ dict_foreign_qualify_index(
 			return(false);
 		}
 
-		// despite it is theoretically possible to construct such
-		// an index with period not at the last positions,
-		// it is not supported at least for now
-		if (dict_index_get_n_fields(index) - 1 != n_cols) {
+		/* Despite it is theoretically possible to construct such
+		   an index with period not at the last positions,
+		   it is not supported at least for now.
+		   Two last fields, DB_ROW_ID and DB_ROLL_PTR, are ignored.
+		*/
+		if (dict_index_get_n_fields(index) - 2 != n_cols) {
 			return(false);
 		}
 		auto pstart = dict_index_get_nth_field(index, n_cols - 2);
