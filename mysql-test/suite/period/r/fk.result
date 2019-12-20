@@ -8,8 +8,8 @@ on delete restrict);
 show create table s;
 Table	Create Table
 s	CREATE TABLE `s` (
-  `id` int(11) DEFAULT NULL,
-  `x` int(11) DEFAULT NULL,
+  `id` int(11) NOT NULL,
+  `x` int(11) NOT NULL,
   `s` date NOT NULL,
   `e` date NOT NULL,
   PERIOD FOR `fp` (`s`, `e`),
