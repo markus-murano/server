@@ -165,6 +165,10 @@ IF(UNIX)
     SET(COMMON_CXX_FLAGS               "-g -static-libgcc -fno-omit-frame-pointer -fno-strict-aliasing -Wno-uninitialized")
     SET(CMAKE_CXX_FLAGS_DEBUG          "-O ${COMMON_CXX_FLAGS}")
     SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 ${COMMON_CXX_FLAGS}")
+    IF(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 4.4)
+      SET(CMAKE_CXX_FLAGS_DEBUG          "-mcrc32 ${COMMON_CXX_FLAGS}")
+      SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-mcrc32 ${COMMON_CXX_FLAGS}")
+    ENDIF()
   ENDIF()
 
   # IBM Z flags

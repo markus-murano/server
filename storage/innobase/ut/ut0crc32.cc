@@ -202,8 +202,15 @@ ut_crc32_8_hw(
 {
 #ifdef _MSC_VER
 	*crc = _mm_crc32_u8(*crc, (*data)[0]);
-#else
+#elif defined(__x86_64__) && defined(__GNUC__) && defined(__GNUC_MINOR__)     \
+	&& (((__GNUC__ * 100) + __GNUC_MINOR__) >= 405)
 	*crc = __builtin_ia32_crc32qi(*crc, (*data)[0]);
+#else
+	asm("crc32b %1, %0"
+	    /* output operands */
+	    : "+r" (*crc)
+	      /* input operands */
+	    : "rm" ((*data)[0]));
 #endif
 
 	(*data)++;
@@ -221,18 +228,26 @@ ut_crc32_64_low_hw(
 	uint64_t	data)
 {
 #ifdef _MSC_VER
-	uint64_t	crc_64bit = crc;
 #ifdef _M_X64
-	crc_64bit = _mm_crc32_u64(crc_64bit, data);
+	return static_cast<uint32_t>(_mm_crc32_u64(crc, data));
 #elif defined(_M_IX86)
 	crc = _mm_crc32_u32(crc, static_cast<uint32_t>(data));
-	crc_64bit = _mm_crc32_u32(crc, static_cast<uint32_t>(data >> 32));
+	return mm_crc32_u32(crc, static_cast<uint32_t>(data >> 32));
 #else
 #error Not Supported processors type.
 #endif
-	return(static_cast<uint32_t>(crc_64bit));
-#else
+
+#elif defined(__x86_64__) && defined(__GNUC__) && defined(__GNUC_MINOR__)     \
+	&& (((__GNUC__ * 100) + __GNUC_MINOR__) >= 405)
 	return static_cast<uint32_t>(__builtin_ia32_crc32di(crc, data));
+#else
+	uint64_t	crc_64bit = crc;
+	asm("crc32q %1, %0"
+	    /* output operands */
+	    : "+r" (crc_64bit)
+	      /* input operands */
+	    : "rm" (data));
+	return static_cast<uint32_t>(crc_64bit);
 #endif
 }
 
